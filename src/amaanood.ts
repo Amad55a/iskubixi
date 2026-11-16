@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import {
   generateAuthenticationOptions,
@@ -55,12 +55,19 @@ export interface CodsiAmaanood {
   userId: string;
 }
 
+export interface CodsiAmaanoodSaxiix extends CodsiAmaanood {
+  /** Internal payment-authorization binding supplied by a trusted server adapter. */
+  paymentBinding?: string;
+}
+
 export interface CodsiFurahaDiiwaangeli extends CodsiAmaanood {
   response: RegistrationResponseJSON;
 }
 
 export interface CodsiSaxiixXaqiiji extends CodsiAmaanood {
   response: AuthenticationResponseJSON;
+  /** Must match the binding supplied when authentication options were created. */
+  paymentBinding?: string;
 }
 
 export interface NatiijoFurahaDiiwaangeli {
@@ -393,9 +400,15 @@ export class Amaanood {
   }
 
   async saxiix(
-    request: CodsiAmaanood
+    request: CodsiAmaanoodSaxiix
   ): Promise<PublicKeyCredentialRequestOptionsJSON> {
     validateUserId(request?.userId);
+    if (
+      request.paymentBinding !== undefined &&
+      !/^[a-f0-9]{64}$/.test(request.paymentBinding)
+    ) {
+      throw new ValidationError("Payment authorization binding must be a SHA-256 digest.");
+    }
     const credentials = await this.storageCall(
       "list credentials",
       () => this.credentialStore.listByUserId(request.userId)
@@ -404,21 +417,37 @@ export class Amaanood {
       throw new WebAuthnError("No passkeys are registered for this account.");
     }
 
+    const requireUserVerification =
+      this.requireUserVerification || request.paymentBinding !== undefined;
     let options: PublicKeyCredentialRequestOptionsJSON;
     try {
       options = await generateAuthenticationOptions({
         rpID: this.rpId,
+        ...(request.paymentBinding === undefined
+          ? {}
+          : {
+              challenge: createHash("sha256")
+                .update("iskubixi:payment-authorization:webauthn:v1:")
+                .update(randomBytes(32))
+                .update(request.paymentBinding, "ascii")
+                .digest("base64url")
+            }),
         allowCredentials: credentials.map((credential) => ({
           id: credential.credentialId,
           transports: credential.transports
         })),
-        userVerification: this.requireUserVerification ? "required" : "preferred"
+        userVerification: requireUserVerification ? "required" : "preferred"
       });
     } catch {
       throw new WebAuthnError("Could not generate passkey authentication options.");
     }
 
-    await this.storeChallenge(options.challenge, request.userId, "xaqiijin");
+    await this.storeChallenge(
+      options.challenge,
+      request.userId,
+      "xaqiijin",
+      request.paymentBinding
+    );
     return options;
   }
 
@@ -429,9 +458,21 @@ export class Amaanood {
     if (!isAuthenticationResponse(request.response)) {
       throw new WebAuthnError("The passkey authentication response is incomplete or invalid.");
     }
+    if (
+      request.paymentBinding !== undefined &&
+      !/^[a-f0-9]{64}$/.test(request.paymentBinding)
+    ) {
+      throw new ValidationError("Payment authorization binding must be a SHA-256 digest.");
+    }
     const challenge = parseChallenge(request.response.response.clientDataJSON);
     const stored = await this.consumeChallenge(challenge);
-    this.requireChallenge(stored, challenge, request.userId, "xaqiijin");
+    this.requireChallenge(
+      stored,
+      challenge,
+      request.userId,
+      "xaqiijin",
+      request.paymentBinding
+    );
 
     const credential = await this.storageCall(
       "find credential",
@@ -450,6 +491,8 @@ export class Amaanood {
     }
 
     let verification;
+    const requireUserVerification =
+      this.requireUserVerification || request.paymentBinding !== undefined;
     try {
       verification = await verifyAuthenticationResponse({
         response: request.response,
@@ -462,9 +505,9 @@ export class Amaanood {
           counter: credential.counter,
           transports: credential.transports
         },
-        requireUserVerification: this.requireUserVerification,
+        requireUserVerification,
         advancedFIDOConfig: {
-          userVerification: this.requireUserVerification ? "required" : "preferred"
+          userVerification: requireUserVerification ? "required" : "preferred"
         }
       });
     } catch {
@@ -472,7 +515,7 @@ export class Amaanood {
     }
     if (
       !verification.verified ||
-      (this.requireUserVerification && !verification.authenticationInfo.userVerified)
+      (requireUserVerification && !verification.authenticationInfo.userVerified)
     ) {
       throw new WebAuthnError("Passkey authentication could not be verified.");
     }
@@ -537,7 +580,8 @@ export class Amaanood {
   private async storeChallenge(
     challenge: string,
     userId: string,
-    ceremony: AmaanoodChallenge["ceremony"]
+    ceremony: AmaanoodChallenge["ceremony"],
+    paymentBinding?: string
   ): Promise<void> {
     const created = await this.storageCall(
       "create challenge",
@@ -546,7 +590,8 @@ export class Amaanood {
           challenge,
           userId,
           ceremony,
-          expiresAt: Date.now() + challengeLifetimeMs
+          expiresAt: Date.now() + challengeLifetimeMs,
+          ...(paymentBinding === undefined ? {} : { paymentBinding })
         })
     );
     if (!created) {
@@ -565,13 +610,15 @@ export class Amaanood {
     challenge: AmaanoodChallenge | undefined,
     expectedChallenge: string,
     userId: string,
-    ceremony: AmaanoodChallenge["ceremony"]
+    ceremony: AmaanoodChallenge["ceremony"],
+    paymentBinding?: string
   ): asserts challenge is AmaanoodChallenge {
     if (
       !challenge ||
       challenge.challenge !== expectedChallenge ||
       challenge.userId !== userId ||
       challenge.ceremony !== ceremony ||
+      challenge.paymentBinding !== paymentBinding ||
       !Number.isFinite(challenge.expiresAt) ||
       challenge.expiresAt <= Date.now()
     ) {

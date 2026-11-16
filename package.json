@@ -1,6 +1,6 @@
 {
   "name": "iskubixi",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Somali-first JavaScript and TypeScript SDK for payments and WebAuthn passkey authentication.",
   "license": "MIT",
   "keywords": [
@@ -15,13 +15,16 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
+    "assets",
     "dist",
+    "docs",
+    "examples",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test tests/*.test.cjs && tsc --noEmit --strict --skipLibCheck --target ES2020 --module commonjs --moduleResolution node tests/package-consumer.test.ts",
+    "test": "npm run build && node --test tests/*.test.cjs && tsc --noEmit --strict --skipLibCheck --target ES2020 --module commonjs --moduleResolution node tests/package-consumer.test.ts && tsc --noEmit -p tsconfig.examples.json",
     "prepack": "npm run build"
   },
   "engines": {

@@ -1,24 +1,70 @@
-﻿# IskuBixi
+# IskuBixi
+
+### One SDK. Many Payments. Smarter Authentication.
 
 ![IskuBixi logo](./assets/iskubixi-logo.svg)
 
-IskuBixi is a Somali-first JavaScript and TypeScript SDK for payments and WebAuthn/passkey authentication. It is built for backend/server use, not browser-only device access. The package keeps payment flows, QR payments, webhook verification, and passkey verification as separate concerns, with application-owned storage and business logic left to the developer.
+**Payments · QR Codes · Face · Fingerprint · Eye · Palm · Passkeys**
 
-The public API is intentionally small and consistent:
+[![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-- `new IskuBixi(configuration)` for payment and webhook operations
-- `iskubixi.lacag.*` for payment creation, lookup, verification, refunds, listing, and testing
-- `iskubixi.qr.*` for QR payment references
-- `iskubixi.webhook.*` for webhook verification and recovery
-- `iskubixi.bixiye.awood()` to inspect provider capabilities
-- `new Amaanood(configuration)` for passkey registration and sign-in
+IskuBixi is a Somali-first JavaScript and TypeScript SDK that gives developers
+a unified way to integrate payment providers, QR payment workflows, and secure
+authentication into their applications.
 
-This package is a pure npm SDK. It does not host a database, an auth service, or a payment gateway. It helps verify provider responses and apply application-side rules around payment, refunds, QR references, and WebAuthn verification.
+**IskuBixi is a developer SDK, not a hosted payment platform.** You own your
+application, user accounts, provider credentials, database, authentication
+sessions, and deployment. The SDK does not host payments or collect raw
+biometric data.
+
+> **Biometric support is adapter-based.** IskuBixi includes no face,
+> fingerprint, iris, or palm scanner. WebAuthn can request device user
+> verification, but it does not tell the application whether the user chose
+> face, fingerprint, PIN, or another method. Modality-specific claims require
+> a trusted adapter that can prove that method.
+
+## Features
+
+| Area | What the SDK provides |
+| --- | --- |
+| Payments | A common API for creating, checking, verifying, listing, and refunding payments |
+| Provider adapters | A `PaymentProvider` contract, capability inspection, and a sandbox-focused WaafiPay adapter |
+| QR payments | Expiring QR references, payload reading, validation, status, and supported cancellation |
+| Passkeys | WebAuthn registration, assertion verification, credential listing, and revocation |
+| Biometric adapters | Modality-specific entry points for face, fingerprint/thumb, eye/iris, and palm when a trusted adapter supports them |
+| Payment authorization | One-time authentication bound to the exact saved payment request |
+| Webhooks | Provider signature verification, event processing, failure inspection, and retry |
+| Reliability | Local idempotency, transaction listing, replaceable storage contracts, and separate payment/authentication states |
+
+### Provider and modality reality check
+
+The package accepts these provider identifiers: `edahab`, `evc`, `zaad`,
+`bank`, and `waafipay`. An identifier is not a bundled live provider
+integration. When no provider adapter is registered, the SDK uses its
+**simulated provider**. The included WaafiPay adapter is sandbox-focused; it
+does not claim transaction lookup, verification, refunds, cancellation, or
+documented provider-side idempotency.
+
+| Authentication request | Included capability |
+| --- | --- |
+| Passkey registration and sign-in | Server-side WebAuthn options and verification through `Amaanood` |
+| Face (`waji`) | Public adapter-backed API; compatible trusted adapter required |
+| Fingerprint/thumb (`faraha`) | Public adapter-backed API; compatible trusted adapter required |
+| Eye/iris (`isha`) | Public adapter-backed API; documented compatible hardware/provider required |
+| Palm (`calaacal`) | Public adapter-backed API; documented compatible hardware/provider required |
+
+No biometric modality is enabled by default. Ordinary WebAuthn user
+verification alone cannot satisfy a payment authorization for a named
+modality. See [Biometric adapters](./docs/biometric-adapters.md).
 
 ## Requirements
 
 - Node.js 20 or later
-- npm 10+ recommended
+- npm (npm 10 or later recommended)
+- HTTPS for deployed WebAuthn origins; localhost is suitable for local
+  development
 
 ## Installation
 
@@ -26,52 +72,46 @@ This package is a pure npm SDK. It does not host a database, an auth service, or
 npm install iskubixi
 ```
 
-For local development in this repository:
+CommonJS:
 
-```sh
-npm install
+```js
+const { IskuBixi, Amaanood } = require("iskubixi");
 ```
 
-## Package metadata and release notes
+TypeScript / ES modules:
 
-The current package metadata in this repository is:
-
-- package name: `iskubixi`
-- version: `0.1.0`
-- license: MIT
-- Node engine requirement: `>=20`
-- main entry: `dist/index.js`
-- type declarations: `dist/index.d.ts`
-
-This repository keeps the package name and version unchanged unless you explicitly ask to change them.
+```ts
+import { IskuBixi, Amaanood } from "iskubixi";
+```
 
 ## Quick start
 
-### JavaScript example
+This short example uses the built-in **simulated** provider. It creates a
+local pending payment; it does not contact a payment provider or move money.
+
+### JavaScript
 
 ```js
 const { IskuBixi } = require("iskubixi");
 
 const iskubixi = new IskuBixi({
   bixiyeyaasha: {
-    edahab: { apiKey: "local-demo-only" }
+    // The local fallback value is not a credential and does not connect to eDahab.
+    edahab: { apiKey: process.env.EDAHAB_API_KEY || "local-demo-only" }
   }
 });
 
 async function main() {
-  const lacag = await iskubixi.lacag.samee({
+  const payment = await iskubixi.lacag.samee({
     qadarka: 20,
     lacagta: "USD",
     bixiye: "edahab",
     tixraac: "LOCAL-DEMO-1"
   });
 
-  const xaqiijin = await iskubixi.lacag.cadee({
-    lacagId: lacag.id
-  });
-
-  console.log(lacag.xaalad); // "sugaya"
-  console.log(xaqiijin.xaqiijin); // "simulated"
+  const verification = await iskubixi.lacag.cadee({ lacagId: payment.id });
+  console.log(payment.xaalad); // "sugaya" (pending)
+  console.log(verification.xaqiijin); // "simulated"
 }
 
 main().catch((error) => {
@@ -80,214 +120,137 @@ main().catch((error) => {
 });
 ```
 
-### TypeScript example
+### TypeScript
 
 ```ts
 import { IskuBixi, type IskuBixiQaabeyn } from "iskubixi";
 
-const qaabeyn: IskuBixiQaabeyn = {
+const configuration: IskuBixiQaabeyn = {
   bixiyeyaasha: {
-    edahab: { apiKey: "local-demo-only" }
+    edahab: {
+      apiKey: process.env.EDAHAB_API_KEY ?? "local-demo-only"
+    }
   }
 };
 
-const iskubixi = new IskuBixi(qaabeyn);
-
-const lacag = await iskubixi.lacag.samee({
+const iskubixi = new IskuBixi(configuration);
+const payment = await iskubixi.lacag.samee({
   qadarka: 20,
   lacagta: "USD",
   bixiye: "edahab",
   tixraac: "LOCAL-DEMO-1"
 });
+const verification = await iskubixi.lacag.cadee({ lacagId: payment.id });
 
-const xaqiijin = await iskubixi.lacag.cadee({
-  lacagId: lacag.id
-});
-
-console.log(lacag.xaalad, xaqiijin.xaqiijin);
+console.log(payment.xaalad, verification.xaqiijin);
 ```
 
-Important: a configured provider without a real adapter still routes through the built-in simulator. The simulator is for local testing and compatibility only; it does not represent a real payment provider integration.
+The default provider is a simulator, even when a provider name and placeholder
+credentials are configured. Do not interpret its results as real payments.
+To process payments, register a provider adapter that calls the real provider
+and verifies its responses.
 
-## Configuration
+## Payment providers
 
-`IskuBixi` accepts a single configuration object:
-
-```ts
-import { IskuBixi, type IskuBixiQaabeyn } from "iskubixi";
-
-const qaabeyn: IskuBixiQaabeyn = {
-  bixiyeyaasha: {
-    edahab: {
-      apiKey: process.env.EDAHAB_API_KEY!,
-      merchantId: process.env.EDAHAB_MERCHANT_ID!
-    },
-    waafipay: {
-      merchantId: process.env.WAAFI_MERCHANT_ID!,
-      apiKey: process.env.WAAFI_API_KEY!
-    }
-  },
-  laqabsadayaasha: {
-    waafipay: waafipayFactory
-  }
-};
-
-const iskubixi = new IskuBixi(qaabeyn);
-```
-
-The supported provider names are:
-
-- `edahab`
-- `evc`
-- `zaad`
-- `bank`
-- `waafipay`
-
-The SDK validates that:
-
-- the top-level config is an object
-- at least one provider is configured
-- no provider entry is explicitly `null`
-- provider adapters implement the required contracts
-- custom storage adapters implement the required operations
-- empty or malformed credential values are rejected
-
-Use only the providers your application actually needs. Do not pass secrets around in application code or log credential objects.
-
-## Errors
-
-The package exports stable error classes from `src/errors.ts` and re-exports them from the top-level package:
+The public provider contract is `PaymentProvider`; provider factories implement
+`PaymentProviderFactory`. Provider credentials remain server-side.
 
 ```ts
 import {
-  IskuBixiError,
-  ConfigurationError,
-  ValidationError,
-  PaymentError,
-  RefundError,
-  StorageError,
-  WebhookVerificationError,
-  WebAuthnError
+  IskuBixi,
+  type IskuBixiQaabeyn,
+  type PaymentProviderFactory
 } from "iskubixi";
-```
 
-The error codes are:
+// Implement this factory against the provider's current official API.
+declare const applicationProviderFactory: PaymentProviderFactory;
 
-- `ISKUBIXI_ERROR`
-- `ISKUBIXI_CONFIGURATION_ERROR`
-- `ISKUBIXI_VALIDATION_ERROR`
-- `ISKUBIXI_PROVIDER_ERROR`
-- `ISKUBIXI_UNSUPPORTED_OPERATION`
-- `ISKUBIXI_PAYMENT_ERROR`
-- `ISKUBIXI_REFUND_ERROR`
-- `ISKUBIXI_WEBHOOK_VERIFICATION_ERROR`
-- `ISKUBIXI_WEBAUTHN_ERROR`
-- `ISKUBIXI_STORAGE_ERROR`
-- `ISKUBIXI_IDEMPOTENCY_ERROR`
-
-Example:
-
-```ts
-import { IskuBixiError } from "iskubixi";
-
-try {
-  const result = await iskubixi.lacag.samee({
-    qadarka: 200,
-    lacagta: "USD",
-    bixiye: "edahab",
-    tixraac: "ORDER-1"
-  });
-  console.log(result.id);
-} catch (error) {
-  if (error instanceof IskuBixiError) {
-    console.error(error.code, error.message);
-  } else {
-    throw error;
+const configuration: IskuBixiQaabeyn = {
+  bixiyeyaasha: {
+    edahab: { apiKey: process.env.EDAHAB_API_KEY! }
+  },
+  laqabsadayaasha: {
+    edahab: applicationProviderFactory
   }
-}
+};
+
+const iskubixi = new IskuBixi(configuration);
 ```
 
-The SDK intentionally sanitizes error details and avoids leaking raw provider credential data, signed payload bodies, private secrets, or stack traces in JSON output.
+IskuBixi does not include live eDahab, EVC, ZAAD, or bank integrations. Do not
+register a placeholder adapter as a real provider.
 
-## Public API reference
+### WaafiPay sandbox adapter
 
-### `new IskuBixi(configuration)`
-
-Create an SDK instance with payment providers and optional custom adapters or storage implementations.
+The package exports `WaafiPayPaymentProviderFactory`. It sends purchase
+requests to the adapter's configured WaafiPay sandbox endpoint. The adapter
+requires valid sandbox credentials and a timestamp formatter matching the
+provider's current documentation.
 
 ```ts
-import { IskuBixi } from "iskubixi";
+import {
+  IskuBixi,
+  WaafiPayPaymentProviderFactory
+} from "iskubixi";
+
+const waafipay = new WaafiPayPaymentProviderFactory({
+  // Return the provider-documented 20-character timestamp format.
+  formatTimestamp: providerDocumentedTimestamp
+});
 
 const iskubixi = new IskuBixi({
   bixiyeyaasha: {
-    edahab: { apiKey: process.env.EDAHAB_API_KEY! }
-  }
+    waafipay: {
+      merchantUid: process.env.WAAFI_MERCHANT_UID!,
+      apiUserId: process.env.WAAFI_API_USER_ID!,
+      apiKey: process.env.WAAFI_API_KEY!
+    }
+  },
+  laqabsadayaasha: { waafipay }
+});
+
+const payment = await iskubixi.lacag.samee({
+  qadarka: 10,
+  lacagta: "USD",
+  bixiye: "waafipay",
+  tixraac: "ORDER-1002",
+  lambarka: process.env.CUSTOMER_WALLET_NUMBER!
 });
 ```
 
-### `iskubixi.lacag.samee()`
+`providerDocumentedTimestamp` above is supplied by your application; use the
+format required by your provider account and current provider documentation.
+Never put these credentials in frontend code or logs. WaafiPay's bundled
+adapter currently supports payment creation only. It does not claim lookup,
+payment verification, cancellation, refunds, or remote idempotency.
 
-Create a payment request.
+## Payments
 
-```ts
-const result = await iskubixi.lacag.samee({
+### Create, check, and verify
+
+```js
+const payment = await iskubixi.lacag.samee({
   qadarka: 49.99,
   lacagta: "USD",
   bixiye: "edahab",
-  tixraac: "PAYMENT-001",
-  furahaIdempotency: "pay-001",
+  tixraac: "ORDER-1001",
+  furahaIdempotency: "order-1001-attempt-1",
   dhacayaa: "2026-12-31T23:59:59Z"
 });
+
+const current = await iskubixi.lacag.xaalad({ lacagId: payment.id });
+const verification = await iskubixi.lacag.cadee({ lacagId: payment.id });
+
+console.log(current.xaalad);
+console.log(verification.xaqiijin); // "adapter" or "simulated"
 ```
 
-Returns a payment object with an `id`, `qadarka`, `lacagta`, `xaalad`, `tixraac`, and optional `dhacayaa` and `celin` fields.
+Amounts must be positive finite numbers, currencies three-letter uppercase
+codes, and references non-empty strings. `lambarka` is provider-specific;
+WaafiPay requires a valid wallet number. Expiry is an ISO 8601 date-time with
+timezone and must be supported by the configured transaction store.
 
-### `iskubixi.lacag.xaalad()`
-
-Check the current payment state for a payment ID.
-
-```ts
-const status = await iskubixi.lacag.xaalad({
-  lacagId: "pay_123"
-});
-```
-
-### `iskubixi.lacag.cadee()`
-
-Verify a previously created payment by its ID and return the provider verification result.
-
-```ts
-const verification = await iskubixi.lacag.cadee({
-  lacagId: "pay_123"
-});
-```
-
-The result includes `waaJiraa`, `xaqiijin`, and the same payment fields as the original payment if the provider supplies them.
-
-### `iskubixi.lacag.celi()`
-
-Create a refund for a confirmed payment.
-
-```ts
-const refund = await iskubixi.lacag.celi({
-  lacagId: "pay_123",
-  furahaIdempotency: "refund-001"
-});
-```
-
-### `iskubixi.lacag.celintaXaalad()`
-
-Check the state of a refund by refund ID.
-
-```ts
-const refundStatus = await iskubixi.lacag.celintaXaalad({
-  celinId: "refund_123"
-});
-```
-
-### `iskubixi.lacag.liiska()`
-
-List payments with optional filters.
+### Refunds and listing
 
 ```ts
 const page = await iskubixi.lacag.liiska({
@@ -297,328 +260,545 @@ const page = await iskubixi.lacag.liiska({
   bogga: 1,
   xadka: 20
 });
-```
 
-This returns `lacagaha`, `wadarta`, `bogga`, `xadka`, and `wadartaBogagga`.
-
-### `iskubixi.lacag.tijaabiXaalad()`
-
-Only for simulated payments, move a simulated payment to a final state for test purposes.
-
-```ts
-const updated = await iskubixi.lacag.tijaabiXaalad({
-  lacagId: "pay_123",
-  xaalad: "guuleystay"
+const refund = await iskubixi.lacag.celi({
+  lacagId: "provider-payment-id",
+  furahaIdempotency: "refund-order-1001"
+});
+const refundStatus = await iskubixi.lacag.celintaXaalad({
+  celinId: refund.id
 });
 ```
 
-This is not a real provider operation.
+Only full refunds are accepted. Refund support and refund-status lookup depend
+on the provider adapter. The returned payment state and refund state are
+separate.
 
-### `iskubixi.qr.samee()`
+There is no general `lacag.jooji()` method. `qr.jooji()` can cancel a pending
+QR-linked payment only when the configured provider supports cancellation.
 
-Create a QR payment reference.
+### Simulated status controls
+
+`lacag.tijaabiXaalad({ lacagId, xaalad })` is for simulated payments and tests
+only. It cannot change a real provider payment and must not be used to confirm
+production payments.
+
+## QR payments
+
+Create a QR payment with an explicit future expiry:
 
 ```ts
 const qr = await iskubixi.qr.samee({
   qadarka: 75,
   lacagta: "USD",
   bixiye: "edahab",
-  dhacayaa: "2026-12-31T23:59:59Z"
+  dhacayaa: new Date(Date.now() + 15 * 60 * 1000).toISOString()
 });
+
+// Render qr.nuxur with your application's QR library.
+console.log(qr.nuxur, qr.tixraac, qr.xaaladQr);
 ```
 
-### `iskubixi.qr.cadee()`
+The SDK creates the linked payment and a random QR reference. `nuxur` is the
+SDK payload `iskubixi:qr:v1:<reference>`; your frontend may render that string
+as a QR image using its own QR display library. The payload is a reference, not
+a signed proof of payment.
 
-Validate a QR reference or payload and resolve the linked payment.
+JavaScript (inside an async route or function):
+
+```js
+const qr = await iskubixi.qr.samee({
+  qadarka: 75,
+  lacagta: "USD",
+  bixiye: "edahab",
+  dhacayaa: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+});
+const activeReference = await iskubixi.qr.cadee({ tixraac: qr.tixraac });
+const scannedPayload = await iskubixi.qr.akhriso({ nuxur: qr.nuxur });
+const status = await iskubixi.qr.xaalad({ tixraac: qr.tixraac });
+```
+
+TypeScript validation:
 
 ```ts
-const result = await iskubixi.qr.cadee({
-  tixraac: "QR-REF-123"
-});
+const byReference = await iskubixi.qr.cadee({ tixraac: qr.tixraac });
+const byPayload = await iskubixi.qr.akhriso({ nuxur: qr.nuxur });
+const status = await iskubixi.qr.xaalad({ tixraac: qr.tixraac });
+const details = await iskubixi.qr.xog({ tixraac: qr.tixraac });
 ```
 
-### `iskubixi.qr.akhriso()`
-
-Read and validate the QR payload embedded in a QR string.
+Validation checks that the reference exists and is still open, not that money
+has been received. `qr.xaalad()` reports both the payment state and QR state.
+QR references can be `furan` (open), `joojiyay` (cancelled), `dhacay` (expired),
+or `laIsticmaalay` (used). Expired, cancelled, and already-used references
+cannot be validated as active.
 
 ```ts
-const payload = await iskubixi.qr.akhriso({
-  nuxur: "base64-or-string-qr-content"
-});
+const cancelled = await iskubixi.qr.jooji({ tixraac: qr.tixraac });
 ```
 
-### `iskubixi.qr.xaalad()`
+Cancellation works only while the linked payment is pending and only if the
+provider supports payment cancellation. Scanning or validating a QR code does
+not confirm a successful payment. Check the provider's verified payment status
+or process its authenticated webhook before fulfilling an order.
 
-Get the current status of a QR reference.
+## Passkeys and WebAuthn
+
+`Amaanood` provides server-side WebAuthn/passkey registration options,
+authentication options, response verification, credential listing, and
+revocation. The browser or mobile application runs the user-facing ceremony.
+The WebAuthn client must convert JSON-encoded binary fields to browser
+`ArrayBuffer` values and serialize the credential response back to JSON. See
+the [frontend example](./examples/frontend/passkey-authorization.ts) for an
+assertion conversion using native browser APIs.
+
+JavaScript (server-side; browser responses come from your WebAuthn client):
+
+```js
+const { Amaanood } = require("iskubixi");
+
+const amaanood = new Amaanood({
+  rpId: "example.com",
+  rpName: "Example App",
+  origins: ["https://example.com"],
+  requireUserVerification: true
+});
+
+async function passkeySignIn(user) {
+  const options = await amaanood.saxiix({ userId: user.id });
+  const response = await sendOptionsToBrowserAndGetAssertion(options);
+  return amaanood.saxiixXaqiiji({ userId: user.id, response });
+}
+```
+
+TypeScript registration and sign-in:
 
 ```ts
-const qrStatus = await iskubixi.qr.xaalad({
-  tixraac: "QR-REF-123"
+import { Amaanood } from "iskubixi";
+
+const amaanood = new Amaanood({
+  rpId: "example.com",
+  rpName: "Example App",
+  origins: ["https://example.com"],
+  requireUserVerification: true
+});
+
+const registrationOptions = await amaanood.furahaAbuur({
+  userId: authenticatedUser.id,
+  userName: authenticatedUser.email,
+  displayName: authenticatedUser.name
+});
+// Send options to the application frontend and run navigator.credentials.create()
+// through a WebAuthn client that handles JSON/ArrayBuffer conversion.
+
+const registration = await amaanood.furahaDiiwaangeli({
+  userId: authenticatedUser.id,
+  response: registrationResponseFromFrontend
+});
+
+const signInOptions = await amaanood.saxiix({
+  userId: authenticatedUser.id
+});
+// Send options to the frontend, run navigator.credentials.get(), and return
+// the serialized authentication response to the backend.
+const signedIn = await amaanood.saxiixXaqiiji({
+  userId: authenticatedUser.id,
+  response: authenticationResponseFromFrontend
 });
 ```
 
-### `iskubixi.qr.jooji()`
+Use the authenticated application's account ID, not an unauthenticated
+browser-supplied identity. The SDK checks challenges, expiry, replay, origin,
+RP ID, credential ownership, signatures, and user verification. It stores
+credential IDs and public keys for verification—not biometric images or
+templates. Challenges and credentials use in-memory stores by default; replace
+them with durable application-owned stores in production.
 
-Cancel a pending QR payment if the provider supports cancellation.
+## Biometric authentication API
+
+The following methods are implemented on `iskubixi.amaanood`. Each start method
+accepts `{ userId: string }` and returns
+`Promise<NatiijoAmaanoodBilow>`: a short-lived `sessionId`, requested `method`,
+`expiresAt`, and client-safe adapter `options`.
+
+| Public method | Requested method | Available by default? |
+| --- | --- | --- |
+| `iskubixi.amaanood.waji({ userId })` | Face | No; trusted compatible adapter required |
+| `iskubixi.amaanood.faraha({ userId })` | Fingerprint or thumb | No; trusted compatible adapter required |
+| `iskubixi.amaanood.isha({ userId })` | Eye or iris | No; documented compatible hardware/provider required |
+| `iskubixi.amaanood.calaacal({ userId })` | Palm | No; documented compatible hardware/provider required |
+| `iskubixi.amaanood.xaqiiji({ userId, sessionId, response })` | Verify a started adapter session | Uses the adapter stored with that session |
+
+The four modality methods and `xaqiiji()` are real exported and implemented
+methods. They do not scan a face, finger, iris, or palm themselves.
+`xaqiiji()` returns a successful authentication only after the configured
+adapter verifies the response and user verification. Its result includes
+`methodConfirmed`; this is true only when the trusted adapter confirms the
+requested modality.
+
+Configure an application-owned adapter implementing the exported
+`AmaanoodLaqabsade` interface:
 
 ```ts
-const cancelled = await iskubixi.qr.jooji({
-  tixraac: "QR-REF-123"
+import {
+  IskuBixi,
+  type AmaanoodLaqabsade
+} from "iskubixi";
+
+declare const trustedAdapter: AmaanoodLaqabsade;
+
+const iskubixi = new IskuBixi({
+  bixiyeyaasha: { edahab: { apiKey: process.env.EDAHAB_API_KEY! } },
+  amaanood: { laqabsadayaal: [trustedAdapter] }
 });
+
+const session = await iskubixi.amaanood.waji({
+  userId: authenticatedUser.id
+});
+// Return session.options to the application frontend for the adapter ceremony.
+const result = await iskubixi.amaanood.xaqiiji({
+  userId: authenticatedUser.id,
+  sessionId: session.sessionId,
+  response: responseFromFrontend
+});
+if (!result.methodConfirmed) {
+  throw new Error("The requested modality was not confirmed.");
+}
 ```
 
-### `iskubixi.qr.xog()`
+JavaScript (the adapter must be supplied by your application):
 
-Fetch the stored QR record metadata.
+```js
+async function authenticateWithFace(userId) {
+  const session = await iskubixi.amaanood.waji({ userId });
+  const response = await trustedBiometricClient.complete(session.options);
+  return iskubixi.amaanood.xaqiiji({
+    userId,
+    sessionId: session.sessionId,
+    response
+  });
+}
+```
+
+The placeholder adapter above is application-supplied; this package includes no
+vendor or biometric hardware adapter. A generic WebAuthn passkey adapter can
+require user verification, but WebAuthn does not disclose whether the user
+verified with face, fingerprint, PIN, or another authenticator method. Do not
+claim a specific method unless a trusted adapter can establish it. Iris
+recognition is not universally available through WebAuthn. Read the
+[adapter guide](./docs/biometric-adapters.md) before integrating a modality.
+
+## Payment authorization
+
+Payment authorization binds a trusted, user-verified authentication ceremony to
+one saved payment request. A successful authorization initiates the stored
+payment request; it does **not** mean the provider completed or settled it.
 
 ```ts
-const record = await iskubixi.qr.xog({
-  tixraac: "QR-REF-123"
+const authorization = await iskubixi.lacag.ogolaanshoAbuur({
+  userId: authenticatedUser.id, // derive on the backend
+  lacag: {
+    qadarka: order.total,
+    lacagta: order.currency,
+    bixiye: "edahab",
+    tixraac: order.reference
+  },
+  hab: "waji"
+});
+
+// Send the safe summary and authenticationOptions to the frontend.
+const result = await iskubixi.lacag.ogolaanshoXaqiiji({
+  userId: authenticatedUser.id, // derive again from the backend session
+  authorizationId: authorization.authorizationId,
+  response: responseFromFrontend
+});
+
+const status = await iskubixi.lacag.ogolaanshoXaalad({
+  userId: authenticatedUser.id,
+  authorizationId: authorization.authorizationId
 });
 ```
 
-### `iskubixi.webhook.cadee()`
+JavaScript (inside an authenticated backend route):
 
-Verify a webhook request by provider-specific signature validation and normalize it into an SDK event.
+```js
+const authorization = await iskubixi.lacag.ogolaanshoAbuur({
+  userId: request.authenticatedUser.id,
+  lacag: {
+    qadarka: order.total,
+    lacagta: order.currency,
+    bixiye: "edahab",
+    tixraac: order.reference
+  },
+  hab: "waji"
+});
+response.json(authorization);
+
+// In the verification route, derive userId from the backend session again.
+const result = await iskubixi.lacag.ogolaanshoXaqiiji({
+  userId: request.authenticatedUser.id,
+  authorizationId: request.body.authorizationId,
+  response: request.body.authenticationResponse
+});
+```
+
+Verification does not accept replacement amount, currency, provider, or
+reference values. The configured adapter must explicitly support payment
+authorization, require user verification, bind the original payment digest,
+and verify the requested modality. Generic WebAuthn user verification alone
+does not meet that modality requirement. Production authorization and
+authentication-session stores must be durable and atomic across application
+instances.
+
+Authorization states (`pending`, `verifying`, `authorized`, `failed`,
+`expired`, `processing`, `reconciliation_required`) are separate from payment
+states. If a provider outcome is uncertain, the SDK does not automatically
+retry that authorization; reconcile with provider evidence first. A local
+idempotency key does not guarantee remote provider idempotency. See the full
+[payment authorization guide](./docs/payment-authorization.md).
+
+## Webhooks
+
+Use a configured `PaymentWebhookAdapter` to authenticate provider signatures.
+The SDK's WaafiPay webhook adapter verifies signatures against the original
+raw request bytes. Preserve those bytes in your HTTP framework; do not parse
+and reserialize the body before verification.
 
 ```ts
 const event = await iskubixi.webhook.cadee({
   bixiye: "waafipay",
-  rawBody: Buffer.from("{" + "\"test\": true" + "}"),
-  headers: {
-    "x-signature": "abc123"
-  }
+  rawBody: rawRequestBody,
+  headers: requestHeaders
 });
-```
 
-This returns either a verified payment event, a verified refund event, or an ignored event.
-
-### `iskubixi.webhook.kaShaqee()`
-
-Apply a verified webhook event to the transaction and payment store.
-
-```ts
-const result = await iskubixi.webhook.kaShaqee({
+// For an adapter configured to apply verified events:
+const processed = await iskubixi.webhook.kaShaqee({
   bixiye: "waafipay",
-  rawBody: Buffer.from("payload"),
-  headers: {
-    "x-signature": "abc123"
-  }
+  rawBody: rawRequestBody,
+  headers: requestHeaders
 });
 ```
 
-### `iskubixi.webhook.fashilmay()`
+JavaScript (inside an HTTP handler; preserve the raw request bytes):
 
-List webhook processing failures that were recorded for later inspection or replay.
-
-```ts
-const failed = await iskubixi.webhook.fashilmay({
-  bixiye: "waafipay"
-});
-```
-
-### `iskubixi.webhook.dibUshaqee()`
-
-Retry a previously failed webhook event.
-
-```ts
-const retried = await iskubixi.webhook.dibUshaqee({
+```js
+const processed = await iskubixi.webhook.kaShaqee({
   bixiye: "waafipay",
-  dhacdoId: "evt_123",
-  codsi: {
-    bixiye: "waafipay",
-    rawBody: Buffer.from("payload"),
-    headers: {
-      "x-signature": "abc123"
-    }
-  }
+  rawBody: rawRequestBytes,
+  headers: requestHeaders
 });
+if (processed.horeLooShaqeeyay) {
+  console.log("Duplicate delivery was already applied.");
+}
 ```
 
-### `iskubixi.bixiye.awood()`
+`cadee()` verifies and normalizes an event; it does not apply the event.
+`kaShaqee()` verifies and applies supported events with deduplication.
+`fashilmay({ bixiye? })` inspects failed events when the configured webhook
+store supports recovery. `dibUshaqee({ bixiye, dhacdoId, codsi? })` retries a
+failed event only after re-verifying the signed request. Webhook verification
+is not available unless an adapter for that provider is configured.
 
-Inspect the capabilities of a provider adapter.
+## Provider capabilities and public API reference
+
+`await iskubixi.bixiye.awood({ bixiye })` returns
+`Promise<NatiijoBixiyeAwood>` with the configured provider name and capability
+flags: `paymentCreation`, `paymentLookup`, `paymentVerification`,
+`paymentCancellation`, `refundCreation`, `refundStatusLookup`, `qrPayment`,
+and `webhookSignatureVerification`. Inspect these flags; never assume a
+provider supports an operation simply because the SDK method exists.
+
+### Payment methods
+
+All payment methods are available on `iskubixi.lacag`:
+
+| Method | Request type | Return type |
+| --- | --- | --- |
+| `samee(request)` | `CodsiLacag` | `Promise<NatiijoLacag>` |
+| `xaalad({ lacagId })` | `CodsiLacagId` | `Promise<NatiijoLacag>` |
+| `cadee({ lacagId })` | `CodsiLacagId` | `Promise<NatiijoXaqiijin>` |
+| `celi({ lacagId, furahaIdempotency })` | `CodsiCelin` | `Promise<NatiijoCelin>` |
+| `celintaXaalad({ celinId })` | `CodsiCelinXaalad` | `Promise<NatiijoCelin>` |
+| `liiska(filters?)` | `CodsiLiiskaLacag` (optional) | `Promise<NatiijoLiiskaLacag>` |
+| `tijaabiXaalad({ lacagId, xaalad })` | `CodsiTijaabiXaalad` | `Promise<NatiijoLacag>`; simulated payments only |
+| `ogolaanshoAbuur(request)` | `CodsiOgolaanshoAbuur` | `Promise<NatiijoOgolaanshoAbuur>` |
+| `ogolaanshoXaqiiji(request)` | `CodsiOgolaanshoXaqiiji` | `Promise<NatiijoOgolaanshoXaqiiji>` |
+| `ogolaanshoXaalad(request)` | `CodsiOgolaanshoXaalad` | `Promise<NatiijoOgolaanshoXaalad>` |
+
+There is no public general payment-cancellation method. Cancellation is
+available only through `qr.jooji()` for a supported pending QR payment.
+
+### QR methods
+
+All QR methods are available on `iskubixi.qr`:
+
+| Method | Request type | Return type |
+| --- | --- | --- |
+| `samee(request)` | `CodsiQrLacag` | `Promise<NatiijoQr>` |
+| `cadee({ tixraac })` | `CodsiQrTixraac` | `Promise<NatiijoQrXaqiijin>` |
+| `akhriso({ nuxur })` | `CodsiQrNuxur` | `Promise<NatiijoQrXaqiijin>` |
+| `xaalad({ tixraac })` | `CodsiQrTixraac` | `Promise<NatiijoQrXaalad>` |
+| `jooji({ tixraac })` | `CodsiQrTixraac` | `Promise<NatiijoQr>` |
+| `xog({ tixraac })` | `CodsiQrTixraac` | `Promise<NatiijoQr>` |
+
+### Webhook methods
+
+All webhook methods are available on `iskubixi.webhook`:
+
+| Method | Request type | Return type |
+| --- | --- | --- |
+| `cadee(request)` | `CodsiWebhook` | `Promise<NatiijoWebhookCadee>` |
+| `kaShaqee(request)` | `CodsiWebhook` | `Promise<NatiijoWebhookShaqeeyay>` |
+| `fashilmay(request?)` | `CodsiWebhookFashilmay` (optional) | `Promise<readonly NatiijoWebhookDhacdoFashilmay[]>` |
+| `dibUshaqee(request)` | `CodsiWebhookDibUshaqee` | `Promise<NatiijoWebhookShaqeeyay>` |
+
+### Passkey methods
+
+All passkey methods belong to an `Amaanood` instance:
+
+| Method | Request type | Return type |
+| --- | --- | --- |
+| `furahaAbuur(request)` | `CodsiFurahaAbuur` | `Promise<PublicKeyCredentialCreationOptionsJSON>` |
+| `furahaDiiwaangeli(request)` | `CodsiFurahaDiiwaangeli` | `Promise<NatiijoFurahaDiiwaangeli>` |
+| `saxiix({ userId })` | `CodsiAmaanoodSaxiix` | `Promise<PublicKeyCredentialRequestOptionsJSON>` |
+| `saxiixXaqiiji(request)` | `CodsiSaxiixXaqiiji` | `Promise<NatiijoSaxiix>` |
+| `furahaLiiska({ userId })` | `CodsiAmaanood` | `Promise<readonly FurahaDiiwaangashan[]>` |
+| `furahaJooji({ userId, credentialId })` | `CodsiAmaanood & { credentialId: string }` | `Promise<boolean>` |
+
+The top-level package also exports provider, storage, request/result, webhook,
+authentication-adapter, and error types.
+
+## Configuration and storage
+
+`IskuBixiQaabeyn` accepts provider credentials, provider factories, webhook
+adapters, authentication adapters, and application-provided stores. The main
+storage configuration fields are:
+
+- `keydkaIdempotency`
+- `keydkaOgolaanshaha`
+- `keydkaCelin` and `keydkaCelinDiiwaanka`
+- `keydkaLacagaha` and `keydkaLacagahaBixiyaha`
+- `keydkaQr`
+- `keydkaWebhook`
+- `amaanood.keydkaKulamada`
 
 ```ts
-const capabilities = await iskubixi.bixiye.awood({
-  bixiye: "waafipay"
-});
+import {
+  IskuBixi,
+  type AmaanoodAuthenticationSessionStore,
+  type IskuBixiQaabeyn,
+  type PaymentAuthorizationStore
+} from "iskubixi";
 
-console.log(capabilities.awoodaha);
+declare const durableAuthorizationStore: PaymentAuthorizationStore;
+declare const durableAuthenticationSessions: AmaanoodAuthenticationSessionStore;
+
+const configuration: IskuBixiQaabeyn = {
+  bixiyeyaasha: { edahab: { apiKey: process.env.EDAHAB_API_KEY! } },
+  amaanood: {
+    laqabsadayaal: [trustedAdapter],
+    keydkaKulamada: durableAuthenticationSessions
+  },
+  keydkaOgolaanshaha: durableAuthorizationStore
+};
+const iskubixi = new IskuBixi(configuration);
 ```
 
-The capability object includes:
+The default in-memory stores are useful for development and tests only. They
+are lost on restart and do not coordinate between server processes. In
+production, implement the exported store interfaces using your own durable
+database and provide atomic claim, consume, idempotency, and event-processing
+operations as required by each contract.
 
-- `paymentCreation`
-- `paymentLookup`
-- `paymentVerification`
-- `paymentCancellation`
-- `refundCreation`
-- `refundStatusLookup`
-- `qrPayment`
-- `webhookSignatureVerification`
+The `Amaanood` constructor additionally accepts `keydkaLoolan` and
+`keydkaFuraha` for WebAuthn challenges and credentials. Protect these records
+and use atomic challenge consumption in production.
 
-## Passkeys and biometric user verification
+## Security and privacy
 
-`Amaanood` is the passkey/WebAuthn helper. It provides server-side options, response verification, credential listing, and revocation. It does not access device sensors and it does not perform a fake or simulated biometric check.
+- Keep all payment and authentication secrets on the backend.
+- Derive user IDs from your authenticated application session.
+- Use HTTPS and configure exact WebAuthn origins and RP IDs.
+- Require user verification where the operation requires it; user presence
+  alone is not user verification.
+- Never treat successful authentication as proof of payment.
+- Verify payment through a capable provider adapter or authenticated webhook.
+- Do not log credential responses, private keys, provider secrets, or signed
+  webhook payloads.
+- IskuBixi does not collect or store raw face images, fingerprints, iris scans,
+  palm images, biometric templates, or measurements.
+- A trusted external adapter is responsible for any modality-specific claim.
 
-The browser or mobile app is responsible for running the WebAuthn ceremony. The SDK only verifies the returned credential response against the configured relying-party (RP) ID and origin.
+## Troubleshooting
 
-WebAuthn authenticators can use a device PIN, fingerprint, face recognition, or another supported user-verification method. The SDK does not know which biometric modality was used, and it cannot claim universal iris recognition support. Iris recognition is not a guaranteed feature of WebAuthn and should not be advertised as such.
+| Problem | What to check |
+| --- | --- |
+| `UnsupportedOperationError` for a provider operation | Inspect `bixiye.awood()` and configure an adapter that implements the operation |
+| Biometric method is unsupported | Configure a trusted adapter whose `supportedMethods` includes the method |
+| Payment authorization rejects a passkey response | The adapter must require user verification, bind the payment digest, and prove the requested modality |
+| Passkey origin/RP ID validation fails | Match the configured RP ID to the browser domain and allow only the exact HTTPS origin |
+| QR reference is invalid or inactive | Check its exact payload/reference, expiry, cancellation, and current payment status |
+| Webhook verification fails | Preserve the exact raw body and check provider signature headers, secret, and timestamp |
+| Payment becomes `reconciliation_required` | Do not retry; reconcile with provider evidence before taking another payment action |
+| Payment remains pending | Check the provider's authenticated status lookup or webhook; authorization alone is not settlement |
 
-The SDK never collects or stores raw biometric data. It stores only credential IDs, public keys, counters, and limited metadata needed for verification. Challenge and credential stores are development-only in-memory stores by default and should be replaced with application-owned durable storage in production.
+Errors extend `IskuBixiError` and expose stable `code` values. Common exports
+include `ConfigurationError`, `ValidationError`, `UnsupportedOperationError`,
+`PaymentError`, `RefundError`, `StorageError`, `WebhookVerificationError`, and
+`WebAuthnError`.
 
-### Configure `Amaanood`
+## Testing
 
-```ts
-import { Amaanood } from "iskubixi";
-
-const amaanood = new Amaanood({
-  rpId: "example.com",
-  rpName: "Example App",
-  origins: ["https://example.com", "https://app.example.com"],
-  requireUserVerification: true
-});
+```sh
+npm install
+npm run build
+npm test
 ```
 
-### `amaanood.furahaAbuur()`
+The tests include mocks for provider/authentication adapters and controlled
+WebAuthn fixtures. They do not represent real payment processing or real
+biometric-device testing. The TypeScript examples are compiled as part of the
+test script.
 
-Generate registration options for a new passkey.
-
-```ts
-const options = await amaanood.furahaAbuur({
-  userId: "user-123",
-  userName: "alice@example.com",
-  displayName: "Alice Example"
-});
-```
-
-### `amaanood.furahaDiiwaangeli()`
-
-Verify a browser/mobile registration response and save the credential.
-
-```ts
-const registration = await amaanood.furahaDiiwaangeli({
-  userId: "user-123",
-  response: browserRegistrationResponse
-});
-```
-
-### `amaanood.saxiix()`
-
-Generate a sign-in challenge for an existing passkey.
-
-```ts
-const authOptions = await amaanood.saxiix({
-  userId: "user-123"
-});
-```
-
-### `amaanood.saxiixXaqiiji()`
-
-Verify a browser/mobile authentication assertion.
-
-```ts
-const signIn = await amaanood.saxiixXaqiiji({
-  userId: "user-123",
-  response: browserAssertionResponse
-});
-```
-
-### `amaanood.furahaLiiska()`
-
-List the registered passkeys for a user.
-
-```ts
-const passkeys = await amaanood.furahaLiiska({
-  userId: "user-123"
-});
-```
-
-### `amaanood.furahaJooji()`
-
-Remove a passkey from a user account.
-
-```ts
-const removed = await amaanood.furahaJooji({
-  userId: "user-123",
-  credentialId: "passkey_credential_id_here"
-});
-```
-
-### End-to-end passkey flow
-
-```ts
-import { Amaanood } from "iskubixi";
-
-const amaanood = new Amaanood({
-  rpId: "example.com",
-  rpName: "Example App",
-  origins: ["https://example.com"]
-});
-
-// 1) Developer backend creates registration options
-const registrationOptions = await amaanood.furahaAbuur({
-  userId: "user-123",
-  userName: "alice@example.com",
-  displayName: "Alice"
-});
-
-// 2) Browser/mobile app runs WebAuthn ceremony and returns registration response
-// const registrationResponse = await webAuthnClient.create(registrationOptions);
-
-// 3) Backend verifies the response and stores the credential
-// const registration = await amaanood.furahaDiiwaangeli({
-//   userId: "user-123",
-//   response: registrationResponse
-// });
-
-// 4) Later, sign-in options are created and verified
-// const authOptions = await amaanood.saxiix({ userId: "user-123" });
-// const assertion = await webAuthnClient.get(authOptions);
-// const session = await amaanood.saxiixXaqiiji({
-//   userId: "user-123",
-//   response: assertion
-// });
-```
-
-Passkey security requirements are enforced as part of the SDK: random single-use challenges, challenge expiry, replay protection, strict origin and RP ID validation, signature verification, user-verification checks, account binding, and safe credential revocation. User presence is not the same thing as user verification.
-
-## Production responsibilities
-
-The SDK is a server-side helper, not a complete identity platform.
+## Production responsibilities and limitations
 
 You are responsible for:
 
-- creating and managing user accounts
-- selecting which user IDs may register or revoke a passkey
-- storing credentials in your own database or key-value store
-- handling recovery, replacement, and lost-device flows
-- rotating or re-binding passkeys when needed
-- verifying provider payments through the provider API or verified callback events
-- validating request origins and RP IDs in your app configuration
-- exposing webhook routes over HTTPS and preserving raw request bodies
-- protecting secrets in environment variables or a secret manager
+- user accounts, authorization policy, and recovery
+- provider integrations, credentials, and provider-side payment confirmation
+- durable storage and cross-instance atomicity
+- HTTPS deployment, webhook routing, and raw-body preservation
+- trusted authentication adapters and evidence for any modality-specific claim
+- unsupported-device and lost-authenticator fallback paths
 
-The SDK is responsible for:
+The SDK does not provide a hosted service, mandatory database, live integration
+for every provider identifier, or biometric hardware. The bundled WaafiPay
+adapter is sandbox-focused and has limited operations. No generic WebAuthn API
+guarantees iris recognition or identifies which local user-verification method
+was used. Confirm provider and device capabilities from their current official
+documentation before enabling them.
 
-- generating safe WebAuthn server options
-- validating challenges, origins, RP IDs, and signatures
-- checking user verification when configured
-- maintaining the credential counters and revocation logic
-- normalizing provider payment and webhook events into SDK objects
+## Examples and guides
 
-## Security notes
+- [JavaScript payment authorization example](./examples/javascript/payment-authorization.js) — explicitly mocked local demo
+- [TypeScript payment authorization example](./examples/typescript/payment-authorization.ts) — strongly typed, explicitly mocked local demo
+- [Frontend passkey authorization example](./examples/frontend/passkey-authorization.ts) — browser WebAuthn ceremony and modality limitations
+- [Payment authorization guide](./docs/payment-authorization.md)
+- [Biometric adapter guide](./docs/biometric-adapters.md)
 
-- Always use HTTPS for browser and webhook traffic.
-- Do not advertise or imply iris recognition support unless it is explicitly supported by a specific authenticator and documented platform API.
-- Do not treat a successful passkey verification as proof that a payment succeeded.
-- Keep application-owned credential and challenge stores durable and atomic.
-- Use the in-memory stores only for development or tests.
-- Never store raw biometric data, face images, fingerprint templates, or private keys in IskuBixi.
+## Contributing
+
+Contributions are welcome. Before opening a change:
+
+1. Read the existing implementation and public types.
+2. Keep provider capabilities and authentication claims aligned with
+   documented behavior.
+3. Add focused tests and update the documentation for public API changes.
+4. Run `npm run build` and `npm test`.
+
+Do not include credentials, real customer information, or biometric data in
+issues, tests, examples, or pull requests.
 
 ## License
 
-This project is licensed under the MIT License.
-
-See [LICENSE](./LICENSE) for details.
+IskuBixi is licensed under the [MIT License](./LICENSE).
