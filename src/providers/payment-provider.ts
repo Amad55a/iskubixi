@@ -8,6 +8,8 @@ export interface PaymentRequest {
   currency: string;
   reference: string;
   accountNumber?: string;
+  /** Forwarded only when the adapter explicitly declares documented provider-side idempotency. */
+  idempotencyKey?: string;
 }
 
 export interface PaymentIdRequest {

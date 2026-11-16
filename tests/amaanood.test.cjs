@@ -8,6 +8,7 @@ const {
 } = require("node:crypto");
 const {
   Amaanood,
+  IskuBixi,
   InMemoryAmaanoodChallengeStore,
   InMemoryAmaanoodCredentialStore,
   ConfigurationError,
@@ -312,6 +313,48 @@ test("rejects invalid assertion signatures without authenticating", async () => 
   );
 });
 
+test("binds WebAuthn authentication challenges to payment authorization digests", async () => {
+  const paymentBinding = "a".repeat(64);
+  const otherBinding = "b".repeat(64);
+  const amaanood = sameeAmaanood();
+  const { credentialId, keyPair } = await registerCredential(amaanood);
+  const options = await amaanood.saxiix({ userId, paymentBinding });
+  assert.notEqual(options.challenge, paymentBinding);
+  const response = makeAuthenticationResponse(options, credentialId, keyPair);
+
+  await assert.rejects(
+    amaanood.saxiixXaqiiji({
+      userId,
+      response,
+      paymentBinding: otherBinding
+    }),
+    WebAuthnError
+  );
+
+  const correctlyBound = sameeAmaanood({ requireUserVerification: false });
+  const registered = await registerCredential(correctlyBound);
+  const boundOptions = await correctlyBound.saxiix({ userId, paymentBinding });
+  assert.equal(boundOptions.userVerification, "required");
+  const boundResponse = makeAuthenticationResponse(
+    boundOptions,
+    registered.credentialId,
+    registered.keyPair
+  );
+  assert.deepEqual(
+    await correctlyBound.saxiixXaqiiji({
+      userId,
+      response: boundResponse,
+      paymentBinding
+    }),
+    {
+      authenticated: true,
+      userId,
+      credentialId: registered.credentialId,
+      userVerified: true
+    }
+  );
+});
+
 test("registers, binds, lists, and safely revokes credentials", async () => {
   const amaanood = sameeAmaanood();
   const { credentialId, keyPair } = await registerCredential(amaanood);
@@ -419,4 +462,59 @@ test("validates relying-party configuration and storage contracts", () => {
     () => sameeAmaanood({ keydkaFuraha: {} }),
     ConfigurationError
   );
+});
+
+test("[mock-adapter] routes a modality session through the existing WebAuthn verifier", async () => {
+  const amaanood = sameeAmaanood();
+  const { keyPair, credentialId } = await registerCredential(amaanood);
+  const adapter = {
+    id: "mock-webauthn-device-adapter",
+    supportedMethods: ["faraha"],
+    async start({ userId: account }) {
+      const options = await amaanood.saxiix({ userId: account });
+      return {
+        options,
+        adapterSessionId: options.challenge,
+        expiresAt: Date.now() + 60_000
+      };
+    },
+    async verify({ userId: account, adapterSessionId, response }) {
+      const clientDataJSON = JSON.parse(
+        Buffer.from(response.response.clientDataJSON, "base64url").toString("utf8")
+      );
+      if (clientDataJSON.challenge !== adapterSessionId) {
+        return { authenticated: false, userVerified: false };
+      }
+      const result = await amaanood.saxiixXaqiiji({
+        userId: account,
+        response
+      });
+      return {
+        authenticated: result.authenticated,
+        userVerified: result.userVerified,
+        verifiedMethod: "faraha"
+      };
+    }
+  };
+  const sdk = new IskuBixi({
+    bixiyeyaasha: { edahab: { apiKey: "test-key" } },
+    amaanood: { laqabsadayaal: [adapter] }
+  });
+
+  const session = await sdk.amaanood.faraha({ userId });
+  const response = makeAuthenticationResponse(
+    session.options,
+    credentialId,
+    keyPair
+  );
+  const result = await sdk.amaanood.xaqiiji({
+    userId,
+    sessionId: session.sessionId,
+    response
+  });
+
+  assert.equal(result.authenticated, true);
+  assert.equal(result.userVerified, true);
+  assert.equal(result.verifiedMethod, "faraha");
+  assert.equal(result.methodConfirmed, true);
 });

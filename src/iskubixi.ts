@@ -9,9 +9,19 @@ import {
   StorageError,
   UnsupportedOperationError,
   ValidationError,
+  WebAuthnError,
   WebhookVerificationError
 } from "./errors";
 import type { Bixiye, IskuBixiQaabeyn } from "./types/configuration";
+import type {
+  AmaanoodHab,
+  AmaanoodHabLaXaqiijiyay,
+  AmaanoodLaqabsade,
+  CodsiAmaanoodBilow,
+  CodsiAmaanoodXaqiiji,
+  NatiijoAmaanoodBilow,
+  NatiijoAmaanoodXaqiiji
+} from "./providers/amaanood-auth-adapter";
 import type {
   CodsiBixiyeAwood,
   NatiijoBixiyeAwood,
@@ -57,11 +67,21 @@ import type {
   ProviderRefundStatus
 } from "./providers/payment-provider";
 import {
+  InMemoryPaymentAuthorizationStore,
+  type PaymentAuthorizationPaymentRequest,
+  type PaymentAuthorizationRecord,
+  type PaymentAuthorizationStore
+} from "./providers/payment-authorization-store";
+import {
   InMemoryWebhookEventStore,
   type RecoverableWebhookEventStore,
   type WebhookEventProcessingResult,
   type WebhookEventStore
 } from "./providers/webhook-event-store";
+import {
+  InMemoryAmaanoodAuthenticationSessionStore,
+  type AmaanoodAuthenticationSessionStore
+} from "./providers/webauthn-store";
 import type {
   CodsiWebhook,
   PaymentWebhookAdapter,
@@ -86,7 +106,13 @@ import type {
   NatiijoQrXaalad,
   NatiijoQrXaqiijin,
   NatiijoXaqiijin,
-  XaaladdaCelin
+  XaaladdaCelin,
+  CodsiOgolaanshoAbuur,
+  CodsiOgolaanshoXaqiiji,
+  CodsiOgolaanshoXaalad,
+  NatiijoOgolaanshoAbuur,
+  NatiijoOgolaanshoXaqiiji,
+  NatiijoOgolaanshoXaalad
 } from "./types/payment";
 import type {
   CodsiWebhookDibUshaqee,
@@ -106,6 +132,27 @@ const bixiyeyaashaLaTaageero: ReadonlySet<string> = new Set([
   "bank",
   "waafipay"
 ]);
+
+const hababkaAqoonsiga: ReadonlySet<string> = new Set([
+  "waji",
+  "faraha",
+  "isha",
+  "calaacal"
+]);
+const aqoonsiSessionLifetimeMs = 5 * 60 * 1000;
+const paymentAuthorizationLifetimeMs = 5 * 60 * 1000;
+
+function waaHabAqoonsi(value: unknown): value is AmaanoodHab {
+  return typeof value === "string" && hababkaAqoonsiga.has(value);
+}
+
+function waaHabLaXaqiijiyay(value: unknown): value is AmaanoodHabLaXaqiijiyay {
+  return value === "user-verification" || waaHabAqoonsi(value);
+}
+
+function waaDiiwaan(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 const methodToCapability = {
   createPayment: "paymentCreation",
@@ -294,7 +341,9 @@ function waaAwoodahaLaqabsade(value: unknown): boolean {
     "paymentVerification",
     "paymentCancellation",
     "refundCreation",
-    "refundStatusLookup"
+    "refundStatusLookup",
+    "paymentIdempotency",
+    "paymentIdempotency"
   ]);
   return Object.entries(value).every(
     ([name, enabled]) => allowed.has(name) && typeof enabled === "boolean"
@@ -421,7 +470,12 @@ export class IskuBixi {
   #qrStore: QrPaymentStore;
   #webhookAdapters: ReadonlyMap<Bixiye, PaymentWebhookAdapter>;
   #providerCapabilities: ReadonlyMap<Bixiye, ProviderCapabilities>;
+  #providersWithIdempotency: ReadonlySet<Bixiye>;
   #webhookEventStore: WebhookEventStore;
+  #authenticationAdapters: ReadonlyMap<string, AmaanoodLaqabsade>;
+  #authenticationAdaptersByMethod: ReadonlyMap<AmaanoodHab, AmaanoodLaqabsade>;
+  #authenticationSessionStore: AmaanoodAuthenticationSessionStore;
+  #paymentAuthorizationStore: PaymentAuthorizationStore;
   #qrCancellationOperations = new Map<string, Promise<NatiijoQr>>();
   #paymentProvidersByPaymentId = new Map<
     string,
@@ -449,7 +503,26 @@ export class IskuBixi {
     liiska: (codsi?: CodsiLiiskaLacag): Promise<NatiijoLiiskaLacag> =>
       this.apiCall(() => this.lacagLiiska(codsi), (message) => new PaymentError(message)),
     tijaabiXaalad: (codsi: CodsiTijaabiXaalad): Promise<NatiijoLacag> =>
-      this.apiCall(() => this.lacagTijaabiXaalad(codsi), (message) => new PaymentError(message))
+      this.apiCall(() => this.lacagTijaabiXaalad(codsi), (message) => new PaymentError(message)),
+    ogolaanshoAbuur: (codsi: CodsiOgolaanshoAbuur): Promise<NatiijoOgolaanshoAbuur> =>
+      this.apiCall(
+        () => this.ogolaanshoAbuur(codsi),
+        (message) => new PaymentError(message)
+      ),
+    ogolaanshoXaqiiji: (
+      codsi: CodsiOgolaanshoXaqiiji
+    ): Promise<NatiijoOgolaanshoXaqiiji> =>
+      this.apiCall(
+        () => this.ogolaanshoXaqiiji(codsi),
+        (message) => new PaymentError(message)
+      ),
+    ogolaanshoXaalad: (
+      codsi: CodsiOgolaanshoXaalad
+    ): Promise<NatiijoOgolaanshoXaalad> =>
+      this.apiCall(
+        () => this.ogolaanshoXaalad(codsi),
+        (message) => new PaymentError(message)
+      )
   };
 
   readonly qr = {
@@ -485,6 +558,34 @@ export class IskuBixi {
   readonly bixiye = {
     awood: (codsi: CodsiBixiyeAwood): Promise<NatiijoBixiyeAwood> =>
       this.apiCall(() => this.bixiyeAwood(codsi), (message) => new ValidationError(message))
+  };
+
+  readonly amaanood = {
+    waji: (request: CodsiAmaanoodBilow): Promise<NatiijoAmaanoodBilow> =>
+      this.apiCall(
+        () => this.bilowAqoonsi("waji", request),
+        (message) => new WebAuthnError(message)
+      ),
+    faraha: (request: CodsiAmaanoodBilow): Promise<NatiijoAmaanoodBilow> =>
+      this.apiCall(
+        () => this.bilowAqoonsi("faraha", request),
+        (message) => new WebAuthnError(message)
+      ),
+    isha: (request: CodsiAmaanoodBilow): Promise<NatiijoAmaanoodBilow> =>
+      this.apiCall(
+        () => this.bilowAqoonsi("isha", request),
+        (message) => new WebAuthnError(message)
+      ),
+    calaacal: (request: CodsiAmaanoodBilow): Promise<NatiijoAmaanoodBilow> =>
+      this.apiCall(
+        () => this.bilowAqoonsi("calaacal", request),
+        (message) => new WebAuthnError(message)
+      ),
+    xaqiiji: (request: CodsiAmaanoodXaqiiji): Promise<NatiijoAmaanoodXaqiiji> =>
+      this.apiCall(
+        () => this.xaqiijiAqoonsi(request),
+        (message) => new WebAuthnError(message)
+      )
   };
 
   constructor(qaabeyn: IskuBixiQaabeyn) {
@@ -573,6 +674,88 @@ export class IskuBixi {
     if (!waaKeydkaXaaladdaBixiyaha(keydkaLacagahaBixiyaha)) {
       throw new ConfigurationError(
         "Provider payment storage must implement save, findById, updateStatus, and refund."
+      );
+    }
+
+    const adapters = qaabeyn.amaanood?.laqabsadayaal ?? [];
+    if (
+      qaabeyn.amaanood !== undefined &&
+      (
+        typeof qaabeyn.amaanood !== "object" ||
+        qaabeyn.amaanood === null ||
+        Array.isArray(qaabeyn.amaanood) ||
+        !Array.isArray(qaabeyn.amaanood.laqabsadayaal)
+      )
+    ) {
+      throw new ConfigurationError("Authentication adapters must be configured as a list.");
+    }
+
+    const authenticationAdapters = new Map<string, AmaanoodLaqabsade>();
+    const authenticationAdaptersByMethod = new Map<AmaanoodHab, AmaanoodLaqabsade>();
+    for (const adapter of adapters) {
+      if (
+        !waaDiiwaan(adapter) ||
+        typeof adapter.id !== "string" ||
+        adapter.id.trim() === "" ||
+        adapter.id.length > 128 ||
+        !Array.isArray(adapter.supportedMethods) ||
+        adapter.supportedMethods.length === 0 ||
+        typeof adapter.start !== "function" ||
+        typeof adapter.verify !== "function" ||
+        (
+          adapter.supportsPaymentAuthorization !== undefined &&
+          typeof adapter.supportsPaymentAuthorization !== "boolean"
+        ) ||
+        authenticationAdapters.has(adapter.id)
+      ) {
+        throw new ConfigurationError("An authentication adapter does not implement its contract.");
+      }
+
+      for (const method of adapter.supportedMethods) {
+        if (
+          !waaHabAqoonsi(method) ||
+          authenticationAdaptersByMethod.has(method)
+        ) {
+          throw new ConfigurationError(
+            "Authentication methods must be valid and may be assigned to only one adapter."
+          );
+        }
+        authenticationAdaptersByMethod.set(method, adapter);
+      }
+      authenticationAdapters.set(adapter.id, adapter);
+    }
+
+    const keydkaAqoonsiga =
+      qaabeyn.amaanood?.keydkaKulamada ??
+      new InMemoryAmaanoodAuthenticationSessionStore();
+    if (
+      typeof keydkaAqoonsiga !== "object" ||
+      keydkaAqoonsiga === null ||
+      typeof keydkaAqoonsiga.create !== "function" ||
+      typeof keydkaAqoonsiga.consume !== "function"
+    ) {
+      throw new ConfigurationError(
+        "Authentication session storage must implement create and consume."
+      );
+    }
+
+    const keydkaOgolaanshaha =
+      qaabeyn.keydkaOgolaanshaha ??
+      new InMemoryPaymentAuthorizationStore();
+    if (
+      typeof keydkaOgolaanshaha !== "object" ||
+      keydkaOgolaanshaha === null ||
+      typeof keydkaOgolaanshaha.create !== "function" ||
+      typeof keydkaOgolaanshaha.claimForVerification !== "function" ||
+      typeof keydkaOgolaanshaha.markVerificationFailure !== "function" ||
+      typeof keydkaOgolaanshaha.markAuthorized !== "function" ||
+      typeof keydkaOgolaanshaha.claimForProcessing !== "function" ||
+      typeof keydkaOgolaanshaha.recordPaymentCreation !== "function" ||
+      typeof keydkaOgolaanshaha.markReconciliationRequired !== "function" ||
+      typeof keydkaOgolaanshaha.findById !== "function"
+    ) {
+      throw new ConfigurationError(
+        "Payment authorization storage does not implement its atomic store contract."
       );
     }
 
@@ -707,11 +890,30 @@ export class IskuBixi {
     );
     this.#webhookAdapters = webhookAdapters;
     this.#webhookEventStore = keydkaWebhook;
+    this.#authenticationAdapters = authenticationAdapters;
+    this.#authenticationAdaptersByMethod = authenticationAdaptersByMethod;
+    this.#authenticationSessionStore = ilaaliKeydka(
+      keydkaAqoonsiga,
+      "authentication session",
+      qaabeyn.amaanood?.keydkaKulamada === undefined
+    );
+    this.#paymentAuthorizationStore = ilaaliKeydka(
+      keydkaOgolaanshaha,
+      "payment authorization",
+      qaabeyn.keydkaOgolaanshaha === undefined
+    );
     this.#providerCapabilities = new Map(
       Array.from(paymentProviders.entries()).map(([bixiye, provider]) => [
         bixiye,
         this.awoodahaBixiyahaKaHel(provider, webhookAdapters.has(bixiye))
       ])
+    );
+    this.#providersWithIdempotency = new Set(
+      Array.from(paymentProviders.entries())
+        .filter(([, provider]) =>
+          provider.capabilities?.paymentIdempotency === true
+        )
+        .map(([bixiye]) => bixiye)
     );
   }
 
@@ -727,6 +929,607 @@ export class IskuBixi {
       }
       throw wrap(error instanceof Error ? error.message : "SDK operation failed.");
     }
+  }
+
+  private async ogolaanshoAbuur(
+    request: CodsiOgolaanshoAbuur
+  ): Promise<NatiijoOgolaanshoAbuur> {
+    if (
+      !waaDiiwaan(request) ||
+      typeof request.userId !== "string" ||
+      request.userId.length === 0 ||
+      request.userId.length > 256 ||
+      Object.keys(request).some((key) =>
+        !["userId", "lacag", "hab"].includes(key)
+      )
+    ) {
+      throw new ValidationError("A valid user and payment authorization request are required.");
+    }
+    if (!waaHabAqoonsi(request.hab)) {
+      throw new ValidationError("A supported authentication method is required.");
+    }
+    const adapter = this.#authenticationAdaptersByMethod.get(request.hab);
+    if (
+      !adapter ||
+      adapter.supportsPaymentAuthorization !== true
+    ) {
+      throw new UnsupportedOperationError(
+        "authentication",
+        "payment authorization with the requested method"
+      );
+    }
+    const payment = this.paymentAuthorizationPayment(request.lacag);
+    const now = Date.now();
+    const paymentExpiry = payment.dhacayaa === undefined
+      ? Number.POSITIVE_INFINITY
+      : Date.parse(payment.dhacayaa);
+    const expiresAt = Math.min(now + paymentAuthorizationLifetimeMs, paymentExpiry);
+    if (expiresAt <= now) {
+      throw new ValidationError("The payment or authorization has already expired.");
+    }
+
+    const authorizationId = randomBytes(32).toString("base64url");
+    const paymentBinding = this.paymentAuthorizationBinding(
+      authorizationId,
+      request.userId,
+      request.hab,
+      payment,
+      expiresAt
+    );
+    const authentication = await this.bilowAqoonsi(
+      request.hab,
+      { userId: request.userId },
+      "payment-authorization",
+      paymentBinding,
+      expiresAt
+    );
+    const record: PaymentAuthorizationRecord = {
+      authorizationId,
+      userId: request.userId,
+      method: request.hab,
+      payment,
+      paymentBinding,
+      ...(payment.dhacayaa === undefined
+        ? {}
+        : { paymentExpiresAt: payment.dhacayaa }),
+      expiresAt,
+      createdAt: new Date(now).toISOString(),
+      authenticationSessionId: authentication.sessionId,
+      status: "pending"
+    };
+    const created = await this.paymentAuthorizationStoreCall(
+      "create authorization",
+      () => this.#paymentAuthorizationStore.create(record)
+    );
+    if (!created) {
+      throw new PaymentError("Could not create a unique payment authorization.");
+    }
+
+    return {
+      authorizationId,
+      expiresAt: new Date(expiresAt).toISOString(),
+      authenticationOptions: authentication.options,
+      lacag: {
+        qadarka: payment.qadarka,
+        lacagta: payment.lacagta,
+        bixiye: payment.bixiye,
+        tixraac: payment.tixraac,
+        ...(payment.dhacayaa === undefined
+          ? {}
+          : { dhacayaa: payment.dhacayaa })
+      }
+    };
+  }
+
+  private async ogolaanshoXaqiiji(
+    request: CodsiOgolaanshoXaqiiji
+  ): Promise<NatiijoOgolaanshoXaqiiji> {
+    if (
+      !waaDiiwaan(request) ||
+      typeof request.userId !== "string" ||
+      request.userId.length === 0 ||
+      request.userId.length > 256 ||
+      typeof request.authorizationId !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(request.authorizationId) ||
+      Object.keys(request).some((key) =>
+        !["userId", "authorizationId", "response"].includes(key)
+      )
+    ) {
+      throw new ValidationError("A valid payment authorization and response are required.");
+    }
+
+    const record = await this.paymentAuthorizationStoreCall(
+      "claim authorization",
+      () => this.#paymentAuthorizationStore.claimForVerification(
+        request.authorizationId,
+        request.userId,
+        Date.now()
+      )
+    );
+    if (!record) {
+      const current = await this.paymentAuthorizationStoreCall(
+        "read authorization",
+        () => this.#paymentAuthorizationStore.findById(
+          request.authorizationId,
+          request.userId,
+          Date.now()
+        )
+      );
+      if (!current) {
+        throw new PaymentError("Payment authorization is unavailable, expired, or already used.");
+      }
+      return this.paymentAuthorizationResult(current);
+    }
+
+    const expectedBinding = this.paymentAuthorizationBinding(
+      record.authorizationId,
+      record.userId,
+      record.method,
+      record.payment,
+      record.expiresAt
+    );
+    if (
+      record.authorizationId !== request.authorizationId ||
+      record.userId !== request.userId ||
+      record.status !== "verifying" ||
+      record.paymentBinding !== expectedBinding ||
+      !/^[A-Za-z0-9_-]{43}$/.test(record.authenticationSessionId)
+    ) {
+      await this.requirePaymentAuthorizationStoreChange(
+        "fail invalid authorization",
+        () => this.#paymentAuthorizationStore.markVerificationFailure(
+          request.authorizationId,
+          request.userId
+        )
+      );
+      throw new PaymentError("Stored payment authorization data is invalid.");
+    }
+
+    try {
+      const verified = await this.xaqiijiAqoonsi({
+        userId: request.userId,
+        sessionId: record.authenticationSessionId,
+        response: request.response
+      }, "payment-authorization", expectedBinding);
+      if (!verified.methodConfirmed) {
+        throw new WebAuthnError(
+          "The authentication adapter did not verify the requested payment authorization method."
+        );
+      }
+    } catch (error) {
+      await this.requirePaymentAuthorizationStoreChange(
+        "record verification failure",
+        () => this.#paymentAuthorizationStore.markVerificationFailure(
+          request.authorizationId,
+          request.userId
+        )
+      );
+      throw error;
+    }
+
+    const authorized = await this.paymentAuthorizationStoreCall(
+      "authorize payment",
+      () => this.#paymentAuthorizationStore.markAuthorized(
+        request.authorizationId,
+        request.userId,
+        Date.now()
+      )
+    );
+    if (!authorized) {
+      const current = await this.paymentAuthorizationStoreCall(
+        "read authorization",
+        () => this.#paymentAuthorizationStore.findById(
+          request.authorizationId,
+          request.userId,
+          Date.now()
+        )
+      );
+      if (current) {
+        return this.paymentAuthorizationResult(current);
+      }
+      throw new PaymentError("Payment authorization expired before it could be processed.");
+    }
+
+    const processingRecord = await this.paymentAuthorizationStoreCall(
+      "claim payment processing",
+      () => this.#paymentAuthorizationStore.claimForProcessing(
+        request.authorizationId,
+        request.userId,
+        Date.now()
+      )
+    );
+    if (!processingRecord) {
+      throw new PaymentError("Payment authorization could not be claimed for processing.");
+    }
+
+    const localIdempotencyKey = `iskubixi-auth-${record.authorizationId}`;
+    const providerIdempotencyKey = this.hashValue(
+      `iskubixi:payment-authorization:${record.authorizationId}`
+    );
+    let payment: NatiijoLacag;
+    try {
+      payment = await this.lacagSamee({
+        ...processingRecord.payment,
+        furahaIdempotency: localIdempotencyKey
+      }, providerIdempotencyKey);
+    } catch {
+      await this.requirePaymentAuthorizationStoreChange(
+        "mark uncertain payment outcome",
+        () => this.#paymentAuthorizationStore.markReconciliationRequired(
+          request.authorizationId,
+          request.userId
+        )
+      );
+      return {
+        authorizationId: request.authorizationId,
+        xaalad: "reconciliation_required",
+        failure: "provider_outcome_uncertain"
+      };
+    }
+
+    let recorded = false;
+    try {
+      recorded = await this.paymentAuthorizationStoreCall(
+        "record created payment",
+        () => this.#paymentAuthorizationStore.recordPaymentCreation(
+          request.authorizationId,
+          request.userId,
+          payment.id
+        )
+      );
+    } catch {
+      await this.requirePaymentAuthorizationStoreChange(
+        "mark unrecorded payment for reconciliation",
+        () => this.#paymentAuthorizationStore.markReconciliationRequired(
+          request.authorizationId,
+          request.userId,
+          payment.id
+        )
+      );
+      return {
+        authorizationId: request.authorizationId,
+        xaalad: "reconciliation_required",
+        payment,
+        failure: "provider_outcome_uncertain"
+      };
+    }
+    if (!recorded) {
+      await this.requirePaymentAuthorizationStoreChange(
+        "mark unrecorded payment for reconciliation",
+        () => this.#paymentAuthorizationStore.markReconciliationRequired(
+          request.authorizationId,
+          request.userId,
+          payment.id
+        )
+      );
+      return {
+        authorizationId: request.authorizationId,
+        xaalad: "reconciliation_required",
+        payment,
+        failure: "provider_outcome_uncertain"
+      };
+    }
+    return {
+      authorizationId: request.authorizationId,
+      xaalad: "processing",
+      payment
+    };
+  }
+
+  private async ogolaanshoXaalad(
+    request: CodsiOgolaanshoXaalad
+  ): Promise<NatiijoOgolaanshoXaalad> {
+    if (
+      !waaDiiwaan(request) ||
+      typeof request.userId !== "string" ||
+      request.userId.length === 0 ||
+      request.userId.length > 256 ||
+      typeof request.authorizationId !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(request.authorizationId) ||
+      Object.keys(request).some((key) =>
+        !["userId", "authorizationId"].includes(key)
+      )
+    ) {
+      throw new ValidationError("A valid payment authorization ID and user are required.");
+    }
+    const record = await this.paymentAuthorizationStoreCall(
+      "read authorization status",
+      () => this.#paymentAuthorizationStore.findById(
+        request.authorizationId,
+        request.userId,
+        Date.now()
+      )
+    );
+    if (!record) {
+      throw new PaymentError("Payment authorization was not found.");
+    }
+    return {
+      authorizationId: record.authorizationId,
+      xaalad: record.status,
+      ...(record.paymentId === undefined ? {} : { paymentId: record.paymentId }),
+      ...(record.failure === undefined ? {} : { failure: record.failure }),
+      expiresAt: new Date(record.expiresAt).toISOString()
+    };
+  }
+
+  private paymentAuthorizationResult(
+    record: PaymentAuthorizationRecord
+  ): NatiijoOgolaanshoXaqiiji {
+    return {
+      authorizationId: record.authorizationId,
+      xaalad: record.status,
+      ...(record.failure === undefined ? {} : { failure: record.failure })
+    };
+  }
+
+  private paymentAuthorizationPayment(
+    value: unknown
+  ): PaymentAuthorizationPaymentRequest {
+    if (
+      !waaDiiwaan(value) ||
+      Object.keys(value).some((key) =>
+        !["qadarka", "lacagta", "bixiye", "tixraac", "lambarka", "dhacayaa"].includes(key)
+      ) ||
+      typeof value.qadarka !== "number" ||
+      !Number.isFinite(value.qadarka) ||
+      value.qadarka <= 0 ||
+      typeof value.lacagta !== "string" ||
+      !/^[A-Z]{3}$/.test(value.lacagta) ||
+      !waaBixiye(value.bixiye) ||
+      typeof value.tixraac !== "string" ||
+      value.tixraac.trim() === ""
+    ) {
+      throw new ValidationError("A valid payment amount, currency, provider, and reference are required.");
+    }
+    const provider = this.#paymentProviders.get(value.bixiye);
+    if (!provider) {
+      throw new ConfigurationError(`Payment provider "${value.bixiye}" is not configured or registered.`);
+    }
+    this.awoodHubi(value.bixiye, "payment creation", "paymentCreation");
+
+    if (
+      value.bixiye === "waafipay" &&
+      (typeof value.lambarka !== "string" || !/^[1-9]\d{9,19}$/.test(value.lambarka))
+    ) {
+      throw new ValidationError("WaafiPay wallet number (lambarka) must be 10 to 20 digits without a leading zero.");
+    }
+    if (value.lambarka !== undefined && typeof value.lambarka !== "string") {
+      throw new ValidationError("Payment account number (lambarka) must be a string.");
+    }
+    if (
+      value.bixiye === "waafipay" &&
+      (
+        !/^[A-Za-z0-9._-]{1,50}$/.test(value.tixraac) ||
+        Math.round(value.qadarka * 100) / 100 !== value.qadarka
+      )
+    ) {
+      throw new ValidationError("WaafiPay requires a 1 to 50 character reference and an amount with at most two decimal places.");
+    }
+    let dhacayaa: string | undefined;
+    if (value.dhacayaa !== undefined) {
+      if (!waaTaariikhISO(value.dhacayaa) || Date.parse(value.dhacayaa) <= Date.now()) {
+        throw new ValidationError("Payment expiry (dhacayaa) must be a future ISO 8601 date-time with a timezone.");
+      }
+      if (!waaKeydkaDhacaya(this.#transactionStore)) {
+        throw new StorageError(
+          "Transaction storage must implement PaymentExpirationTransactionStore to create expiring payments."
+        );
+      }
+      dhacayaa = new Date(Date.parse(value.dhacayaa)).toISOString();
+    }
+    return {
+      qadarka: value.qadarka,
+      lacagta: value.lacagta,
+      bixiye: value.bixiye,
+      tixraac: value.tixraac,
+      ...(value.lambarka === undefined ? {} : { lambarka: value.lambarka }),
+      ...(dhacayaa === undefined ? {} : { dhacayaa })
+    };
+  }
+
+  private paymentAuthorizationBinding(
+    authorizationId: string,
+    userId: string,
+    method: AmaanoodHab,
+    payment: PaymentAuthorizationPaymentRequest,
+    expiresAt: number
+  ): string {
+    return this.hashValue(JSON.stringify([
+      "iskubixi-payment-authorization-v1",
+      authorizationId,
+      userId,
+      method,
+      payment.qadarka,
+      payment.lacagta,
+      payment.bixiye,
+      payment.tixraac,
+      payment.lambarka ?? null,
+      payment.dhacayaa ?? null,
+      expiresAt
+    ]));
+  }
+
+  private async paymentAuthorizationStoreCall<T>(
+    operation: string,
+    action: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await action();
+    } catch {
+      throw new StorageError(
+        `Payment authorization storage operation "${operation}" failed.`,
+        { context: { storage: "payment-authorization", operation } }
+      );
+    }
+  }
+
+  private async requirePaymentAuthorizationStoreChange(
+    operation: string,
+    action: () => Promise<boolean>
+  ): Promise<void> {
+    const changed = await this.paymentAuthorizationStoreCall(operation, action);
+    if (!changed) {
+      throw new StorageError(
+        `Payment authorization storage operation "${operation}" could not apply the state transition.`,
+        { context: { storage: "payment-authorization", operation } }
+      );
+    }
+  }
+
+  private async bilowAqoonsi(
+    method: AmaanoodHab,
+    request: CodsiAmaanoodBilow,
+    purpose: "authentication" | "payment-authorization" = "authentication",
+    paymentBinding?: string,
+    expiresAtLimit?: number
+  ): Promise<NatiijoAmaanoodBilow> {
+    if (
+      !waaDiiwaan(request) ||
+      typeof request.userId !== "string" ||
+      request.userId.length === 0 ||
+      request.userId.length > 256
+    ) {
+      throw new ValidationError("A valid application user ID is required.");
+    }
+
+    const adapter = this.#authenticationAdaptersByMethod.get(method);
+    if (!adapter || !adapter.supportedMethods.includes(method)) {
+      throw new UnsupportedOperationError("authentication", `${method} authentication`);
+    }
+
+    let response: Awaited<ReturnType<AmaanoodLaqabsade["start"]>>;
+    try {
+      response = await adapter.start({
+        userId: request.userId,
+        method,
+        ...(paymentBinding === undefined ? {} : { paymentBinding })
+      });
+    } catch {
+      throw new WebAuthnError("The configured authentication adapter could not start the request.");
+    }
+
+    const now = Date.now();
+    if (
+      !waaDiiwaan(response) ||
+      !waaDiiwaan(response.options) ||
+      typeof response.adapterSessionId !== "string" ||
+      response.adapterSessionId.length === 0 ||
+      response.adapterSessionId.length > 2048 ||
+      typeof response.expiresAt !== "number" ||
+      !Number.isFinite(response.expiresAt) ||
+      response.expiresAt <= now
+    ) {
+      throw new WebAuthnError("The authentication adapter returned an invalid session.");
+    }
+
+    const expiresAt = Math.min(
+      response.expiresAt,
+      now + aqoonsiSessionLifetimeMs,
+      expiresAtLimit ?? Number.POSITIVE_INFINITY
+    );
+    if (expiresAt <= now) {
+      throw new WebAuthnError("The authentication session expired before it could be stored.");
+    }
+    const sessionId = randomBytes(32).toString("base64url");
+    const created = await this.#authenticationSessionStore.create({
+      sessionId,
+      userId: request.userId,
+      method,
+      adapterId: adapter.id,
+      adapterSessionId: response.adapterSessionId,
+      expiresAt,
+      purpose,
+      ...(paymentBinding === undefined ? {} : { paymentBinding })
+    });
+    if (!created) {
+      throw new WebAuthnError("Could not create a unique authentication session.");
+    }
+
+    return {
+      sessionId,
+      method,
+      expiresAt: new Date(expiresAt).toISOString(),
+      options: response.options
+    };
+  }
+
+  private async xaqiijiAqoonsi(
+    request: CodsiAmaanoodXaqiiji,
+    purpose: "authentication" | "payment-authorization" = "authentication",
+    paymentBinding?: string
+  ): Promise<NatiijoAmaanoodXaqiiji> {
+    if (
+      !waaDiiwaan(request) ||
+      typeof request.userId !== "string" ||
+      request.userId.length === 0 ||
+      request.userId.length > 256 ||
+      typeof request.sessionId !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(request.sessionId)
+    ) {
+      throw new ValidationError("A valid authentication session and response are required.");
+    }
+    if (!waaDiiwaan(request.response)) {
+      throw new WebAuthnError("The authentication response is incomplete or invalid.");
+    }
+
+    const session = await this.#authenticationSessionStore.consume(
+      request.sessionId,
+      request.userId,
+      Date.now()
+    );
+    if (!session) {
+      throw new WebAuthnError("The authentication session is invalid, expired, or already used.");
+    }
+    if (
+      session.sessionId !== request.sessionId ||
+      session.userId !== request.userId ||
+      !waaHabAqoonsi(session.method) ||
+      (session.purpose ?? "authentication") !== purpose ||
+      session.paymentBinding !== paymentBinding
+    ) {
+      throw new WebAuthnError("The authentication session is invalid.");
+    }
+
+    const adapter = this.#authenticationAdapters.get(session.adapterId);
+    if (!adapter || !adapter.supportedMethods.includes(session.method)) {
+      throw new ConfigurationError("The authentication session adapter is not configured.");
+    }
+
+    let verification: Awaited<ReturnType<AmaanoodLaqabsade["verify"]>>;
+    try {
+      verification = await adapter.verify({
+        userId: session.userId,
+        method: session.method,
+        adapterSessionId: session.adapterSessionId,
+        response: request.response,
+        ...(paymentBinding === undefined ? {} : { paymentBinding })
+      });
+    } catch {
+      throw new WebAuthnError("The authentication response could not be verified.");
+    }
+    if (
+      !waaDiiwaan(verification) ||
+      verification.authenticated !== true ||
+      verification.userVerified !== true ||
+      (
+        verification.verifiedMethod !== undefined &&
+        !waaHabLaXaqiijiyay(verification.verifiedMethod)
+      )
+    ) {
+      throw new WebAuthnError("The authentication response could not be verified.");
+    }
+
+    return {
+      authenticated: true,
+      userId: session.userId,
+      sessionId: session.sessionId,
+      requestedMethod: session.method,
+      ...(verification.verifiedMethod === undefined
+        ? {}
+        : { verifiedMethod: verification.verifiedMethod }),
+      methodConfirmed: verification.verifiedMethod === session.method,
+      userVerified: true
+    };
   }
 
   private async bixiyeAwood(
@@ -791,7 +1594,10 @@ export class IskuBixi {
     }
   }
 
-  private async lacagSamee(codsi: CodsiLacag): Promise<NatiijoLacag> {
+  private async lacagSamee(
+    codsi: CodsiLacag,
+    providerIdempotencyKey?: string
+  ): Promise<NatiijoLacag> {
     if (!codsi || typeof codsi !== "object" || Array.isArray(codsi)) {
       throw new ValidationError("Payment request is required.");
     }
@@ -854,7 +1660,11 @@ export class IskuBixi {
           amount: codsi.qadarka,
           currency: codsi.lacagta,
           reference: codsi.tixraac,
-          accountNumber: codsi.lambarka
+          accountNumber: codsi.lambarka,
+          ...(providerIdempotencyKey !== undefined &&
+            this.#providersWithIdempotency.has(codsi.bixiye)
+            ? { idempotencyKey: providerIdempotencyKey }
+            : {})
         })
       );
     };

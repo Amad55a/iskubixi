@@ -1,6 +1,11 @@
 import type { Bixiye } from "./configuration";
 import type { PaymentVerificationSource } from "../providers/payment-provider";
 import type { XaaladdaQr } from "../providers/qr-payment-store";
+import type { AmaanoodHab, AmaanoodMacluumaadDoorasho } from "../providers/amaanood-auth-adapter";
+import type {
+  PaymentAuthorizationFailure,
+  PaymentAuthorizationStatus
+} from "../providers/payment-authorization-store";
 
 export type XaaladdaLacagta =
   | "sugaya"
@@ -35,6 +40,53 @@ export interface CodsiLacag {
   lambarka?: string;
   furahaIdempotency?: string;
   dhacayaa?: string;
+}
+
+export interface CodsiOgolaanshoAbuur {
+  userId: string;
+  lacag: Omit<CodsiLacag, "furahaIdempotency">;
+  hab: AmaanoodHab;
+}
+
+export interface KoobanLacagOgolaansho {
+  qadarka: number;
+  lacagta: string;
+  bixiye: Bixiye;
+  tixraac: string;
+  dhacayaa?: string;
+}
+
+export interface NatiijoOgolaanshoAbuur {
+  authorizationId: string;
+  expiresAt: string;
+  authenticationOptions: AmaanoodMacluumaadDoorasho;
+  lacag: KoobanLacagOgolaansho;
+}
+
+export interface CodsiOgolaanshoXaqiiji {
+  userId: string;
+  authorizationId: string;
+  response: unknown;
+}
+
+export interface NatiijoOgolaanshoXaqiiji {
+  authorizationId: string;
+  xaalad: PaymentAuthorizationStatus;
+  payment?: NatiijoLacag;
+  failure?: PaymentAuthorizationFailure;
+}
+
+export interface CodsiOgolaanshoXaalad {
+  userId: string;
+  authorizationId: string;
+}
+
+export interface NatiijoOgolaanshoXaalad {
+  authorizationId: string;
+  xaalad: PaymentAuthorizationStatus;
+  paymentId?: string;
+  failure?: PaymentAuthorizationFailure;
+  expiresAt: string;
 }
 
 export interface NatiijoLacag {

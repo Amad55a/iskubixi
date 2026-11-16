@@ -21,7 +21,10 @@ export type ProviderCapabilityOverrides = Partial<
     | "refundCreation"
     | "refundStatusLookup"
   >
->;
+> & {
+  /** True only when the remote provider documents idempotency-key semantics. */
+  paymentIdempotency?: boolean;
+};
 
 export interface CodsiBixiyeAwood {
   bixiye: Bixiye;

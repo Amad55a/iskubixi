@@ -14,10 +14,11 @@ export interface AmaanoodChallenge {
   userId: string;
   ceremony: AmaanoodCeremony;
   expiresAt: number;
+  paymentBinding?: string;
 }
 
 export interface AmaanoodChallengeStore {
-  /** Atomically save a challenge; return false if the challenge already exists. */
+  /** Atomically save the complete record, including paymentBinding; return false on duplicate. */
   create(challenge: AmaanoodChallenge): Promise<boolean>;
   /** Atomically remove a challenge, including expired challenges, before returning it. */
   consume(challenge: string, now: number): Promise<AmaanoodChallenge | undefined>;
@@ -50,6 +51,66 @@ export interface AmaanoodCredentialStore {
   ): Promise<boolean>;
   /** Atomically remove a credential only when it belongs to the supplied user. */
   remove(userId: string, credentialId: string): Promise<boolean>;
+}
+
+export interface AmaanoodAuthenticationSession {
+  sessionId: string;
+  userId: string;
+  method: import("./amaanood-auth-adapter").AmaanoodHab;
+  adapterId: string;
+  adapterSessionId: string;
+  expiresAt: number;
+  purpose?: "authentication" | "payment-authorization";
+  paymentBinding?: string;
+}
+
+export interface AmaanoodAuthenticationSessionStore {
+  /** Atomically save a session without replacing an existing session ID. */
+  create(session: AmaanoodAuthenticationSession): Promise<boolean>;
+  /** Atomically consume only a matching user's unexpired session; prevent replay across instances. */
+  consume(
+    sessionId: string,
+    userId: string,
+    now: number
+  ): Promise<AmaanoodAuthenticationSession | undefined>;
+}
+
+export class InMemoryAmaanoodAuthenticationSessionStore
+implements AmaanoodAuthenticationSessionStore {
+  private readonly sessions = new Map<string, AmaanoodAuthenticationSession>();
+
+  async create(session: AmaanoodAuthenticationSession): Promise<boolean> {
+    for (const [id, existing] of this.sessions) {
+      if (existing.expiresAt <= Date.now()) {
+        this.sessions.delete(id);
+      }
+    }
+    if (this.sessions.has(session.sessionId)) {
+      return false;
+    }
+    this.sessions.set(session.sessionId, { ...session });
+    return true;
+  }
+
+  async consume(
+    sessionId: string,
+    userId: string,
+    now: number
+  ): Promise<AmaanoodAuthenticationSession | undefined> {
+    const stored = this.sessions.get(sessionId);
+    if (!stored) {
+      return undefined;
+    }
+    if (!Number.isFinite(stored.expiresAt) || stored.expiresAt <= now) {
+      this.sessions.delete(sessionId);
+      return undefined;
+    }
+    if (stored.userId !== userId) {
+      return undefined;
+    }
+    this.sessions.delete(sessionId);
+    return { ...stored };
+  }
 }
 
 export class InMemoryAmaanoodChallengeStore implements AmaanoodChallengeStore {

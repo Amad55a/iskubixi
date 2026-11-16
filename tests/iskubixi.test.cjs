@@ -87,6 +87,7 @@ test("rejects invalid custom adapter and storage contracts during initialization
   const validCredentials = { apiKey: "valid-test-key" };
   const invalidConfigurations = [
     { keydkaIdempotency: {} },
+    { keydkaOgolaanshaha: {} },
     { keydkaCelin: {} },
     { keydkaCelinDiiwaanka: {} },
     { keydkaLacagaha: {} },
