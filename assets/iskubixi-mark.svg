@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B2F73"/>
+      <stop offset="55%" stop-color="#1C5CC7"/>
+      <stop offset="100%" stop-color="#32B7F0"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#EAF8FF"/>
+      <stop offset="100%" stop-color="#C7EBFF"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <path d="M256 40L402 128V296L256 384L110 296V128L256 40Z" fill="url(#bg)"/>
+    <path d="M256 72L367 136V288L256 352L145 288V136L256 72Z" fill="none" stroke="#C7E7FF" stroke-opacity="0.5" stroke-width="6"/>
+    <rect x="176" y="150" width="66" height="220" rx="20" fill="white"/>
+    <path d="M184 170H280C303 170 319 186 319 206V210C319 230 303 246 280 246H228V272H282C307 272 325 289 325 311V315C325 338 307 354 281 354H184V170Z" fill="white"/>
+    <path d="M284 170C349 188 387 220 387 276C387 332 347 369 282 385L308 322C333 318 348 306 348 287C348 266 334 251 295 239L284 170Z" fill="url(#wave)"/>
+  </g>
+</svg>
