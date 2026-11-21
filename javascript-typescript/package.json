@@ -1,0 +1,56 @@
+{
+  "name": "iskubixi",
+  "version": "1.2.0",
+  "description": "Somali-first JavaScript and TypeScript SDK for payments and WebAuthn passkey authentication.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Amad55a/iskubixi.git",
+    "directory": "javascript-typescript"
+  },
+  "homepage": "https://github.com/Amad55a/iskubixi/tree/version1/javascript-typescript#readme",
+  "keywords": [
+    "payments",
+    "passkeys",
+    "WebAuthn",
+    "Somali",
+    "TypeScript",
+    "SDK"
+  ],
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "assets",
+    "dist",
+    "docs",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.cjs && tsc --noEmit --strict --skipLibCheck --target ES2020 --module commonjs --moduleResolution node tests/package-consumer.test.ts && tsc --noEmit -p tsconfig.examples.json",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "13.3.2",
+    "stripe": "^23.1.0"
+  }
+}
