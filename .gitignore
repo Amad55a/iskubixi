@@ -1,5 +1,32 @@
+# Dependencies
 node_modules/
-dist/
+
+# Generated build and test output
+**/dist/
+**/target/
+**/coverage/
+*.tsbuildinfo
+
+# Local environment and credentials
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+id_rsa
+id_ed25519
+credentials.json
+secrets.json
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
